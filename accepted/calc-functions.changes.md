@@ -1,3 +1,8 @@
+## Draft 1.3
+
+* Update the definition of potentially slash-separated numbers to exclude
+  calc functions that were previously evaluated as Sass global functions.
+
 ## Draft 1.2
 
 * Fix behavior of `log` to accept two arguments.
