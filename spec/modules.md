@@ -10,6 +10,9 @@
   * [Module Graph](#module-graph)
   * [Import Context](#import-context)
   * [Built-In Module](#built-in-module)
+  * [Importer](#importer)
+  * [Filesystem Importer](#filesystem-importer)
+  * [Global Importer List](#global-importer-list)
   * [Basename](#basename)
   * [Dirname](#dirname)
 * [Syntax](#syntax)
@@ -17,6 +20,7 @@
   * [Loading a Module](#loading-a-module)
   * [Loading a Source File](#loading-a-source-file)
   * [Resolving a `file:` URL](#resolving-a-file-url)
+  * [Resolving a `file:` URL for Extensions](#resolving-a-file-url-for-extensions)
   * [Resolving a `file:` URL for Partials](#resolving-a-file-url-for-partials)
   * [Resolving a Member](#resolving-a-member)
 
@@ -34,7 +38,7 @@ Two members are considered identical if they have the same name, type, source
 location, and were defined in or forwarded from the same original module.
 
 > Each member type has its own namespace in Sass, so for example the mixin
-> `name` doesn't conflict with the function `name` or the variable `$name`. 
+> `name` doesn't conflict with the function `name` or the variable `$name`.
 
 ### CSS Tree
 
@@ -48,9 +52,9 @@ An *empty CSS tree* contains no statements.
 ### Configuration
 
 A *configuration* is a map from [variable](variables.md) names to SassScript
-values. An *empty configuration* contains no entries.
+values and an opaque ID. An *empty configuration* contains no entries.
 
-[source file]: syntax.md#source-file
+A new *configuration* ID is unique unless otherwise specified.
 
 ### Module
 
@@ -58,11 +62,11 @@ A *module* is a collection of various properties:
 
 * A set of [members](#member) that contains at most one member of any given type
   and name.
-  
+
   > For example, a module may not have two variables named `$name`, although it
   > may contain a function and a mixin with the same name or two functions with
   > different names.
-  
+
   > The names (and mixin and function signatures) of a module's members are
   > static, and can be determined without executing its associated source file.
   > This means that any possible module for a given source file has the same
@@ -94,6 +98,8 @@ A *module* is a collection of various properties:
 
   > Note that [built-in modules](#built-in-module) *do not* have source files
   > associated with them.
+
+  [source file]: syntax.md#source-file
 
 * An absolute URL, known as the module's *canonical URL*. If the module has a
   source file, this must be the same as the source file's canonical URL.
@@ -139,13 +145,76 @@ member of any given type and name. It's always mutable.
 A *built-in module* is a module defined either by the Sass specification or by
 the host environment of the Sass compilation in some implementation-specific
 way. Modules defined by the Sass specification all have the scheme `sass:` and
-are all described in [the `built_in_modules` directory][]. Modules defined
+are all described in [the `built-in-modules` directory][]. Modules defined
 outside the Sass compilation may not use the scheme `sass:`.
 
-[the `built_in_modules` directory]: built_in_modules
+[the `built-in-modules` directory]: built-in-modules
 
 Built-in modules may contain mixins, variables, or functions, but they may never
 contain CSS or extensions.
+
+### Importer
+
+An *importer* is a function that takes a string that may be either a relative or
+absolute URL and returns three values: a string (the text of a stylesheet), a
+syntax ("indented", "scss", or "css"), and an absolute URL (that
+stylesheet's canonical URL). It may also return null to indicate that the
+importer doesn't recognize the URL in question or cannot find a corresponding
+stylesheet. If the URL is recognized but invalid, it should throw an error
+rather than returning null. What constitutes "recognized" or "invalid" is left
+up to the importer.
+
+The details of an importer's behavior is typically defined by the end user in an
+implementation-specific way. However, all importers must adhere to the following
+contract:
+
+* When the URL returned by an importer is passed back to that importer, it must
+  return the same result.
+
+* The importer must return the same result for all URLs that refer to the same
+  file, although what specifically constitutes "the same file" is left up to the
+  importer.
+
+> Importers are represented as a single function in the spec to simplify the
+> writing of algorithms, but implementations are encouraged to have users
+> instead define two separate functions: a `canonicalize()` function that
+> converts an input string into a canonical URL, and a `load()` function that
+> loads the contents of a canonical URL. This allows implementations to avoid
+> the overhead of reloading the same file over and over.
+
+### Filesystem Importer
+
+A *filesystem importer* is an [importer](#importer) with an associated absolute
+`file:` URL named `base`. When a filesystem importer is invoked with a string
+named `string`:
+
+* Let `url` be the result of [parsing `string` as a URL][parsing a URL] with
+  `base` as the base URL. If this returns a failure, throw that failure.
+
+* If `url`'s scheme is not `file`, return null.
+
+* Let `resolved` be the result of [resolving `url`](#resolving-a-file-url).
+
+* If `resolved` is null, return null.
+
+* Let `text` be the contents of the file at `resolved`.
+
+* Let `syntax` be:
+  * "scss" if `url` ends in `.scss`.
+  * "indented" if `url` ends in `.sass`.
+  * "css" if `url` ends in `.css`.
+
+  > The algorithm for [resolving a `file:` URL](#resolving-a-file-url)
+  > guarantees that `url` will have one of these extensions.
+
+* Return `text`, `syntax`, and `resolved`.
+
+[parsing a URL]: https://url.spec.whatwg.org/#concept-url-parser
+
+### Global Importer List
+
+The *global importer list* is a list of importers that's set for the entire
+duration of a Sass compilation.
 
 ### Basename
 
@@ -163,7 +232,7 @@ modules:
 
 <x><pre>
 **PublicIdentifier**     ::= [\<ident-token>][] that doesn't begin with '-' or '_'
-**NamespacedIdentifier** ::= Identifier | Identifier '.' PublicIdentifier
+**NamespacedIdentifier** ::= [\<ident-token>][] | [\<ident-token>][] '.' PublicIdentifier
 </pre></x>
 
 [\<ident-token>]: https://drafts.csswg.org/css-syntax-3/#ident-token-diagram
@@ -191,13 +260,21 @@ This algorithm takes a string `argument` and [configuration](#configuration)
 
 * If `file` is null, throw an error.
 
-* If `file` has already been [executed][]:
+* If `file` has already been [executed] by the [Loading a Module] procedure:
 
   [executed]: spec.md#executing-a-file
 
-  * If `config` is not empty, throw an error.
+  * If `config` is not empty and has a different ID than the configuration that
+    was passed the first time `file` was executed by the [Loading a Module]
+    procedure, throw an error.
+
+    > An ID may be reused in a new configuration via [`@forward ... with`].
 
   * Otherwise, return the module that execution produced.
+
+  [Loading a Module]: #loading-a-module
+
+[`@forward ... with`]: at-rules/forward.md#semantics
 
 * If `file` is currently being executed, throw an error.
 
@@ -213,62 +290,59 @@ This algorithm takes a string `argument` and [configuration](#configuration)
 
 ### Loading a Source File
 
-This algorithm takes a string, `argument`, and returns either a [source file][]
-or null.
+This algorithm takes a string, `argument`, and returns either a [source file] or
+null.
 
-* If the scheme of the [current source file][]'s canonical URL is `file`:
+* If `argument` is a relative URL:
 
-  [current source file]: spec.md#current-source-file
+  * Let `resolved` be the result of [parsing `argument` as a URL][parsing a URL]
+    with the [current source file]'s canonical URL as the base URL.
 
-  * Let `root` be the current source file's canonical URL.
+  * Let `result` be the result of passing `resolved` to the current source
+    file's [importer](#importer).
 
-* Otherwise, let `root` be `null`.
+  * If `result` is not null:
 
-* Let `bases` be a list beginning with `root` if it's non-null, followed by the
-  absolute `file:` URLs of all import paths.
+    * Let `ast` be the result of [parsing] `result`'s text as `result`'s syntax.
 
-* For each `base` in `bases`:
+    * Return a source file with `ast` as its abstract syntax tree, `result`'s
+      URL as its canonical URL, and the current source file's importer as its
+      importer.
 
-  * Let `url` be the result of [parsing `argument` as a URL][] with `base` as
-    the base URL.
+* For each `importer` in the [global importer list](#global-importer-list):
 
-    If this returns a failure, throw that failure.
+  * Let `result` be the result of passing `argument` to `importer`.
 
-  * If `url`'s scheme is not `file`, return null.
+  * If `result` is not null:
 
-  * Let `resolved` be the result of [resolving `url`](#resolving-a-file-url).
+    * Let `ast` be the result of [parsing] `result`'s text as `result`'s syntax.
 
-  * If `resolved` is null:
-
-    * Let `index` be [`dirname(url)`](#dirname) + `"index/"` +
-      [`basename(url)`](#basename).
-
-    * Set `resolved` to the result of [resolving
-      `index`](#resolving-a-file-url).
-
-  * If `resolved` is still null, continue to the next loop.
-
-  * Let `text` be the contents of the file at `resolved`.
-
-  * Let `ast` be:
-
-    * The result of parsing `text` as SCSS if `resolved` ends in `.scss`.
-    * The result of parsing `text` as the indented syntax if `resolved` ends in
-      `.sass`.
-    * The result of [parsing `text` as CSS][] if `resolved` ends in `.css`.
-
-    > The algorithm for [resolving a `file:` URL](#resolving-a-file-url)
-    > guarantees that `resolved` will have one of these extensions.
-
-  * Return a source file with `ast` as its abstract syntax tree and `resolved`
-    as its canonical URL.
-
-  [parsing `argument` as a URL]: https://url.spec.whatwg.org/#concept-url-parser
-  [parsing `text` as CSS]: syntax.md#parsing-text-as-css
+    * Return a source file with `ast` as its abstract syntax tree, `result`'s
+      URL as its canonical URL, and `importer` as its importer.
 
 * Return null.
 
+[current source file]: spec.md#current-source-file
+[parsing]: syntax.md#parsing-text
+
 ### Resolving a `file:` URL
+
+This algorithm takes a URL, `url`, whose scheme must be `file` and returns
+either another URL that's guaranteed to point to a file on disk or null.
+
+* Let `resolved` be the result of [resolving `url` for extensions][resolving for
+  extensions].
+
+* If `resolved` is not null, return it. Otherwise:
+
+* Let `index` be `url` + `"/index"`
+
+* Return the result of [resolving `index` for extensions][resolving for
+  extensions].
+
+[resolving for extensions]: #resolving-a-file-url-for-extensions
+
+### Resolving a `file:` URL for Extensions
 
 This algorithm takes a URL, `url`, whose scheme must be `file` and returns
 either another URL that's guaranteed to point to a file on disk or null.
@@ -306,7 +380,7 @@ either another URL that's guaranteed to point to a file on disk or null.
   * Otherwise, if the result of [resolving `url` + `".import.css"` for
     partials][resolving for partials] is not null, return it.
 
-* Otherwise, let `sass` be the result of [resolving `url` + `".sass"` for
+* Let `sass` be the result of [resolving `url` + `".sass"` for
   partials][resolving for partials].
 
 * Let `scss` be the result of [resolving `url` + `".scss"` for

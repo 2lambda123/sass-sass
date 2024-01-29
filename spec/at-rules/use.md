@@ -29,12 +29,14 @@ The grammar for the `@use` rule is as follows:
 
 <x><pre>
 **UseRule**         ::= '@use' QuotedString AsClause? WithClause?
-**AsClause**        ::= 'as' ('\*' | Identifier)
+**AsClause**        ::= 'as' ('\*' | [\<ident-token>][])
 **WithClause**      ::= 'with' '('
 &#32;                     KeywordArgument (',' KeywordArgument)\* ','?
 &#32;                   ')'
-**KeywordArgument** ::= '$' Identifier ':' Expression
+**KeywordArgument** ::= '$' [\<ident-token>][] ':' Expression
 </pre></x>
+
+[\<ident-token>]: https://drafts.csswg.org/css-syntax-3/#ident-token-diagram
 
 `@use` rules must be at the top level of the document, and must come before any
 rules other than `@charset` or `@forward`. The `QuotedString`'s contents, known
@@ -93,8 +95,8 @@ This algorithm takes a `@use` rule `rule`, and returns either an identifier or
 * Let `basename` be the text after the final `/` in `path`, or the entire `path`
   if `path` doesn't contain `/`.
 
-* Let `module-name` be the text before the first `.` in `path`, or the entire
-  `path` if `path` doesn't contain `.`.
+* Let `module-name` be the text before the first `.` in `basename`, or the entire
+  `basename` if `basename` doesn't contain `.`.
 
 * If `module-name` begins with `_`, remove the leading `_` and set `module-name`
   to the result.

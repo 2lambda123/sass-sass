@@ -17,8 +17,10 @@
 ### Syntax
 
 <x><pre>
-**MixinRule** ::= '@mixin' Identifier ArgumentDeclaration? '{' Statements '}'
+**MixinRule** ::= '@mixin' [\<ident-token>][] ArgumentDeclaration? '{' Statements '}'
 </pre></x>
+
+[\<ident-token>]: https://drafts.csswg.org/css-syntax-3/#ident-token-diagram
 
 No whitespace is allowed between the `Identifier` and the `ArgumentDeclaration`
 in `MixinRule`.
@@ -52,7 +54,7 @@ To execute a `@mixin` rule `rule`:
 
 <x><pre>
 **IncludeRule**      ::= '@include' [NamespacedIdentifier][] ArgumentInvocation?
-                         ContentBlock?
+&#32;                    ContentBlock?
 **ContentBlock**     ::= UsingDeclaration? '{' Statements '}'
 **UsingDeclaration** ::= 'using' ArgumentDeclaration
 </pre></x>

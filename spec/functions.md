@@ -3,11 +3,14 @@
 ## Table of Contents
 
 * [Definitions](#definitions)
-  * [Special Number String](#special-number-string)
+  * [Special Number](#special-number)
   * [Special Variable String](#special-variable-string)
 * [Syntax](#syntax)
 * [Semantics](#semantics)
+  * [`EmptyFallbackVar`:](#emptyfallbackvar)
+  * [`FunctionCall`](#functioncall)
 * [Global Functions](#global-functions)
+  * [`adjust-hue()`](#adjust-hue)
   * [`alpha()`](#alpha)
   * [`rgb()` and `rgba()`](#rgb-and-rgba)
   * [`hsl()` and `hsla()`](#hsl-and-hsla)
@@ -15,28 +18,59 @@
 
 ## Definitions
 
-### Special Number String
+### Special Number
 
-A *special number string* is an unquoted string that CSS will recognize as a
-function that may return a number. For the purposes of Sass, this is any
-unquoted string that begins with `calc(`, `var(`, `env(`, `min(`, or `max(`.
-This matching is case-insensitive.
+A *special number* is either:
+
+* a [calculation], or
+* an unquoted string that CSS will recognize as a function that may return a
+  number. For the purposes of Sass, this is any unquoted string that begins with
+  `calc(`, `var(`, `env(`, `clamp(`, `min(`, or `max(`. This matching is
+  case-insensitive.
+
+[calculation]: types/calculation.md
 
 > Sass functions that shadow CSS functions must work with any invocation that
-> CSS allows, which includes allowing special number strings anywhere a number
-> would be allowed.
+> CSS allows, which includes allowing special numbers anywhere a number would be
+> allowed.
 
 ### Special Variable String
 
-A *special variable string* is [special number string][] that begins with
-`var(`. This matching is case-insensitive.
+A *special variable string* is [special number] that begins with `var(`. This
+matching is case-insensitive.
 
-[special number string]: #special-number-string
+[special number]: #special-number
 
-> Unlike other special number strings, variables can expand into multiple
-> arguments to a single function.
+> Unlike other special numbers, variables can expand into multiple arguments to
+> a single function.
 
 ## Syntax
+
+<x><pre>
+**FunctionExpression**¹ ::= [CssMinMax]
+&#32;                     | [SpecialFunctionExpression]
+&#32;                     | [CalculationExpression]
+&#32;                     | EmptyFallbackVar
+&#32;                     | FunctionCall
+**EmptyFallbackVar**²   ::= 'var(' Expression ',' ')'
+**FunctionCall**⁴       ::= [NamespacedIdentifier] ArgumentInvocation
+</pre></x>
+
+[CssMinMax]: types/calculation.md#cssminmax
+[SpecialFunctionExpression]: syntax.md#specialfunctionexpression
+[CalculationExpression]: types/calculation.md#calculationexpression
+[NamespacedIdentifier]: modules.md#syntax
+
+1: Both `CssMinMax` and `EmptyFallbackVar` take precedence over `FunctionCall`
+   if either could be consumed.
+
+2: `'var('` is matched case-insensitively.
+
+4: `FunctionCall` may not have any whitespace between the `NamespacedIdentifier`
+   and the `ArgumentInvocation`. It may not start with [`SpecialFunctionName`],
+   `'calc('`, or `'clamp('` (case-insensitively).
+
+[`SpecialFunctionName`]: syntax.md#specialfunctionexpression
 
 <x><pre>
 **FunctionCall** ::= [NamespacedIdentifier][] ArgumentInvocation
@@ -49,13 +83,29 @@ No whitespace is allowed between the `NamespacedIdentifier` and the
 
 ## Semantics
 
+### `EmptyFallbackVar`:
+
+To evaluate an `EmptyFallbackVar` `call`:
+
+* Let `argument` be the result of evaluating `call`'s `Expression`.
+
+* Let `function` be the result of [resolving a function] named `'var'`.
+
+  [resolving a function]: modules.md#resolving-a-member
+
+* If `function` is null, return an unquoted string consisting of `'var('`
+  followed by `argument`'s CSS representation followed by `',)'`.
+
+* Return the result of calling `function` with `argument` as its first argument
+  and an empty unquoted string as its second argument.
+
+### `FunctionCall`
+
 To evaluate a `FunctionCall` `call`:
 
 * Let `name` be `call`'s `NamespacedIdentifier`.
 
 * Let `function` be the result of [resolving a function][] named `name`.
-
-  [resolving a function]: modules.md#resolving-a-member
 
 * If `function` is null and `name` is not a plain `Identifier`, throw an error.
 
@@ -92,6 +142,27 @@ To evaluate a `FunctionCall` `call`:
 > aliases for backwards-compatibility with stylesheets written before `@use` was
 > introduced. These global aliases should be avoided by stylesheet authors if
 > possible.
+
+### `adjust-hue()`
+
+```
+adjust-hue($color, $degrees)
+```
+
+* If `$color` isn't a color or `$degrees` isn't a number, throw an error.
+
+* Let `degrees` be the result of [converting] `$degrees` to `deg` allowing
+  unitless.
+
+* Let `saturation` and `lightness` be the result of calling
+  [`color.saturation($color)`] and [`color.lightness($color)`], respectively.
+
+* Return the result of calling [`hsl()`] with `degree`, `saturation`,
+  `lightness`, and `$color`'s alpha channel.
+
+[`hsl()`]: #hsl-and-hsla
+[`color.saturation($color)`]: built-in-modules/color.md#saturation
+[`color.lightness($color)`]: built-in-modules/color.md#lightness
 
 ### `alpha()`
 
@@ -132,7 +203,7 @@ plain CSS function named `"rgb"` that function is named `"rgba"` instead.
   rgb($red, $green, $blue, $alpha)
   ```
 
-  * If any argument is a [special number string][], return a plain CSS function
+  * If any argument is a [special number], return a plain CSS function
     string with the name `"rgb"` and the arguments `$red`, `$green`, `$blue`,
     and `$alpha`.
 
@@ -146,15 +217,14 @@ plain CSS function named `"rgb"` that function is named `"rgba"` instead.
 
   * Return a color with the given `red`, `green`, `blue`, and `alpha` channels.
 
-  [percent-converting]: built_in_modules/color.md#percent-converting-a-number
+  [percent-converting]: built-in-modules/color.md#percent-converting-a-number
 
 * ```
   rgb($red, $green, $blue)
   ```
 
-  * If any argument is a [special number string][], return a plain CSS function
-    string with the name `"rgb"` and the arguments `$red`, `$green`, and
-    `$blue`.
+  * If any argument is a [special number], return a plain CSS function string
+    with the name `"rgb"` and the arguments `$red`, `$green`, and `$blue`.
 
   * Otherwise, return the result of calling `rgb()` with `$red`, `$green`,
     `$blue`, and `1`.
@@ -175,9 +245,34 @@ plain CSS function named `"rgb"` that function is named `"rgba"` instead.
 * ```
   rgb($channels)
   ```
-  
+
   * If `$channels` is a [special variable string][], return a plain CSS function
     string with the name `"rgb"` and the argument `$channels`.
+
+  * If `$channels` is an unbracketed slash-separated list:
+
+    * If `$channels` doesn't have exactly two elements, throw an error.
+      Otherwise, let `rgb` be the first element and `alpha` the second element.
+
+    * If either `rgb` or `alpha` is a special variable string, return a plain
+      CSS function string with the name `"rgb"` and the argument `$channels`.
+
+    * If `rgb` is not an unbracketed space-separated list, throw an error.
+
+    * If `rgb` has more than three elements, throw an error.
+
+    * If `rgb` has fewer than three elements:
+
+      * If any element of `rgb` is a [special variable string][], return a
+        plain CSS function string with the name `"rgb"` and the argument
+        `$channels`.
+
+      * Otherwise, throw an error.
+
+    * Let `red`, `green`, and `blue` be the three elements of `rgb`.
+
+    * Call `rgb()` with `red`, `green`, `blue`, and `alpha` as arguments and
+      return the result.
 
   * If `$channels` is not an unbracketed space-separated list, throw an error.
 
@@ -226,39 +321,43 @@ plain CSS function named `"hsl"` that function is named `"hsla"` instead.
   hsl($hue, $saturation, $lightness, $alpha: 1)
   ```
 
-  * If any argument is a [special number string][], return a plain CSS function
+  * If any argument is a [special number], return a plain CSS function
     string with the name `"hsl"` and the arguments `$hue`, `$saturation`,
     `$lightness`, and `$alpha`.
 
   * If any of `$hue`, `$saturation`, `$lightness`, or `$alpha` aren't numbers,
     throw an error.
 
-  * Let `hue` be `($hue % 360) / 6`.
+  * Let `hue` be the result of [converting] `$hue` to `deg` allowing unitless.
+
+  * If `$saturation` and `$lightness` don't have unit `%`, throw an error.
 
   * Let `saturation` and `lightness` be the result of clamping `$saturation` and
-    `$lightness`, respectively, between 0 and 100 and dividing by 100.
-  
+    `$lightness`, respectively, between `0%` and `100%` and dividing by `100%`.
+
   * Let `red`, `green`, and `blue` be the result of converting `hue`,
     `saturation`, and `lightness` [to RGB][].
 
-  * Let `alpha` be the result of percent-converting `$alpha` with a `max` of 1.
+  * Set `red`, `green`, and `blue` to their existing values multiplied by 255
+    and rounded to the nearest integers.
+
+  * Let `alpha` be the result of [percent-converting][] `$alpha` with a `max` of 1.
 
   * Return a color with the given `red`, `green`, `blue`, and `alpha` channels.
 
+  [converting]: types/number.md#converting-a-number-to-a-unit
   [to RGB]: https://www.w3.org/TR/css-color-4/#hsl-to-rgb
 
 * ```
   hsl($hue, $saturation, $lightness)
   ```
 
-  * If any argument is a [special number strings][], return a plain CSS function
-    string with the name `"hsl"` and the arguments `$hue`, `$saturation`, and
+  * If any argument is a [special number], return a plain CSS function string
+    with the name `"hsl"` and the arguments `$hue`, `$saturation`, and
     `$lightness`.
 
   * Otherwise, return the result of calling `hsl()` with `$hue`, `$saturation`,
     `$lightness`, and `1`.
-
-  [special number strings]: #special-number-string
 
 * ```
   hsl($hue, $saturation)
@@ -268,13 +367,38 @@ plain CSS function named `"hsl"` that function is named `"hsla"` instead.
     function string with the name `"hsl"` and the same arguments.
 
   * Otherwise, throw an error.
-  
+
 * ```
   hsl($channels)
   ```
 
   * If `$channels` is a [special variable string][], return a plain CSS function
     string with the name `"hsl"` and the argument `$channels`.
+
+  * If `$channels` is an unbracketed slash-separated list:
+
+    * If `$channels` doesn't have exactly two elements, throw an error.
+      Otherwise, let `hsl` be the first element and `alpha` the second element.
+
+    * If either `hsl` or `alpha` is a special variable string, return a plain
+      CSS function string with the name `"hsl"` and the argument `$channels`.
+
+    * If `hsl` is not an unbracketed space-separated list, throw an error.
+
+    * If `hsl` has more than three elements, throw an error.
+
+    * If `hsl` has fewer than three elements:
+
+      * If any element of `hsl` is a [special variable string][], return a
+        plain CSS function string with the name `"hsl"` and the argument
+        `$channels`.
+
+      * Otherwise, throw an error.
+
+    * Let `hue`, `saturation`, and `lightness` be the three elements of `hsl`.
+
+    * Call `hsl()` with `hue`, `saturation`, `lightness`, and `alpha` as
+      arguments and return the result.
 
   * If `$channels` is not an unbracketed space-separated list, throw an error.
 

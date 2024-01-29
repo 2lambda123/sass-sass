@@ -8,8 +8,10 @@
 ## Syntax
 
 <x><pre>
-**FunctionRule** ::= '@function' Identifier ArgumentDeclaration '{' Statements '}'
+**FunctionRule** ::= '@function' [\<ident-token>][] ArgumentDeclaration '{' Statements '}'
 </pre></x>
+
+[\<ident-token>]: https://drafts.csswg.org/css-syntax-3/#ident-token-diagram
 
 No whitespace is allowed between the `Identifier` and the `ArgumentDeclaration`
 in `FunctionRule`.
@@ -19,6 +21,12 @@ in `FunctionRule`.
 To execute a `@function` rule `rule`:
 
 * Let `name` be the value of `rule`'s `Identifier`.
+
+* If `name` is `calc`, `element`, `expression`, `url`, `and`, `or`, or `not`, or
+  if `name` has a [vendor prefix] and the unprefixed identifier is one of those
+  strings, throw an error.
+
+  [vendor prefix]: ../syntax.md#vendor-prefix
 
 * If `rule` is outside of any block of statements:
 

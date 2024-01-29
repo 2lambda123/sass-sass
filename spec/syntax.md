@@ -4,25 +4,39 @@
 
 * [Definitions](#definitions)
   * [Source File](#source-file)
+  * [Vendor Prefix](#vendor-prefix)
 * [Grammar](#grammar)
   * [`InterpolatedIdentifier`](#interpolatedidentifier)
+  * [`InterpolatedUrl`](#interpolatedurl)
   * [`Name`](#name)
-  * [`MinMaxExpression`](#minmaxexpression)
+  * [`SpecialFunctionExpression`](#specialfunctionexpression)
+  * [`PseudoSelector`](#pseudoselector)
 * [Procedures](#procedures)
+  * [Parsing Text](#parsing-text)
   * [Parsing Text as CSS](#parsing-text-as-css)
   * [Consuming an Identifier](#consuming-an-identifier)
   * [Consuming an Interpolated Identifier](#consuming-an-interpolated-identifier)
   * [Consuming a Name](#consuming-a-name)
   * [Consuming an Escaped Code Point](#consuming-an-escaped-code-point)
-  * [Consuming `min()` or `max()`](#consuming-min-or-max)
+  * [Consuming a special function](#consuming-a-special-function)
 
 ## Definitions
 
 ### Source File
 
 A *source file* is a Sass abstract syntax tree along with an absolute URL, known
-as that file's *canonical URL*. A given canonical URL cannot be associated with
-more than one source file.
+as that file's *canonical URL*; and an [importer]. A given canonical URL cannot
+be associated with more than one source file.
+
+[importer]: modules.md#importer
+
+### Vendor Prefix
+
+Some identifiers have a *vendor prefix*, which is an initial substring beginning
+with U+002D HYPHEN-MINUS code point followed by one or more non-U+002D code
+points followed by another U+002D. An identifier only has a vendor prefix if the
+final U+002D is followed by additional text. This additional text is referred to
+as the *unprefixed identifier*.
 
 ## Grammar
 
@@ -37,32 +51,91 @@ more than one source file.
 
 No whitespace is allowed between components of an `InterpolatedIdentifier`.
 
+### `InterpolatedUrl`
+
+<x><pre>
+**InterpolatedUrl**         ::= 'url(' (QuotedString | InterpolatedUnquotedUrlContents) ')'
+**InterpolatedUnquotedUrlContents** ::= ([unescaped url contents][] | [escape][] | Interpolation)*
+</pre></x>
+
+[unescaped url contents]: https://www.w3.org/TR/css-syntax-3/#url-token-diagram
+
+No whitespace is allowed between components of an `InterpolatedUnquotedUrlContents`.
+
 ### `Name`
 
 <x><pre>
-**Name** ::= ([name code point][] | [escape][])+
+**Name** ::= ([identifier code point][] | [escape][])+
 </pre></x>
 
-[name-start code point]: https://drafts.csswg.org/css-syntax-3/#name-start-code-point
+[identifier code point]: https://drafts.csswg.org/css-syntax-3/#identifier-code-point
 [escape]: https://drafts.csswg.org/css-syntax-3/#escape-diagram
 
-### `MinMaxExpression`
+### `SpecialFunctionExpression`
+
+> These functions are "special" in the sense that their arguments don't use the
+> normal CSS expression-level syntax, and so have to be parsed more broadly than
+> a normal SassScript expression.
 
 <x><pre>
-**MinMaxExpression** ::= CssMinMax | FunctionExpression
-**CssMinMax**        ::= ('min(' | 'max(')¹ CalcValue (',' CalcValue)* ')'
-**CalcValue**        ::= CalcValue (('+' | '-' | '*' | '/') CalcValue)+
-&#32;                  | '(' CalcValue ')'
-&#32;                  | ('calc(' | 'env(' | 'var(')¹ InterpolatedDeclarationValue ')'
-&#32;                  | CssMinMax
-&#32;                  | Interpolation
-&#32;                  | Number
+**SpecialFunctionExpression** ::= SpecialFunctionName InterpolatedDeclarationValue ')'
+**SpecialFunctionName**¹      ::= VendorPrefix? ('element(' | 'expression(')
+&#32;                           | VendorPrefix 'calc('
+**VendorPrefix**¹             ::= '-' ([identifier-start code point] | [digit]) '-'
 </pre></x>
 
-1: The strings `min(`, `max(`, `calc(`, `env(`, and `var(` are matched
-   case-insensitively.
+[digit]: https://drafts.csswg.org/css-syntax-3/#digit
+
+1: Both `SpecialFunctionName` and `VendorPrefix` are matched case-insensitively,
+   and neither may contain whitespace.
+
+### `PseudoSelector`
+
+<x><pre>
+**PseudoSelector** ::= NormalPseudoSelector
+&#32;                | SelectorPseudo
+&#32;                | NthSelectorPseudo
+**NormalPseudoSelector** ::= ':' ':'? VendorPrefix? [\<ident-token>][]
+&#32;                        ('(' [\<declaration-value>] ')')?
+**SelectorPseudo** ::= SelectorPseudoName '(' Selector ')'
+**NthSelectorPseudo** ::= NthSelectorPseudoName '(' [\<an+b>] 'of'¹ Selector ')'
+**SelectorPseudoName** ::= ':' ('not' | 'matches' | 'any' | 'current' | 'has' | 'host' | 'host-context')
+&#32;                    | '::slotted'
+**NthSelectorPseudoName** ::= ':' ('nth-child' | 'nth-last-child')
+</pre></x>
+
+[\<declaration-value>]: https://www.w3.org/TR/css-syntax-3/#typedef-declaration-value
+[\<an+b>]: https://www.w3.org/TR/css-syntax-3/#the-anb-type
+[\<ident-token>]: https://drafts.csswg.org/css-syntax-3/#ident-token-diagram
+
+1: The string `of` is matched case-insensitively. In addition, it must be parsed
+   as an identifier.
+
+   > In other words, it must have whitespace separating it from other
+   > identifiers, so `:nth-child(2nof a)` and `:nth-child(2n ofa)` are both
+   > invalid. However, `:nth-child(2of.foo)` is valid.
+
+If a `PseudoSelector` begins with`SelectorPseudoName` or `NthSelectorPseudoName`
+followed by a parenthesis, it must be parsed as a `SelectorPseudo` or an
+`NthSelectorPseudo` respectively, not as a `NormalPseudoSelector`.
+
+No whitespace is allowed anywhere in a `PseudoSelector` except within
+parentheses.
 
 ## Procedures
+
+### Parsing Text
+
+This algorithm takes a string `text` and a syntax `syntax` ("indented", "scss",
+or "sass"), and returns a Sass abstract syntax tree.
+
+* If `syntax` is "indented", return the result of parsing `text` as the indented
+  syntax.
+
+* If `syntax` is "css", return the result of [parsing `text` as
+  CSS](#parsing-text-as-css).
+
+* If `syntax` is "scss", return the result of parsing `text` as SCSS.
 
 ### Parsing Text as CSS
 
@@ -106,8 +179,8 @@ modifications. The following productions should produce errors:
   * `@warn`
   * `@while`
 
-* An `@import` that contains interpolation in the `url()`, the media query, or
-  the supports query.
+* An `@import` that contains interpolation in the `url()` or any of its
+  `ImportModifier`s.
 
 * An `@import` that appears within a style rule or at-rule.
 
@@ -204,13 +277,13 @@ This production has the same grammar as [`<ident-token>`][].
   * If the stream starts with `\`, [consume an escaped code point][] with the
     `start` flag set and append it to `string`.
 
-  * Otherwise, if the stream starts with a [name-start code point][], consume it
-    and append it to `string`.
+  * Otherwise, if the stream starts with an [identifier-start code point][],
+    consume it and append it to `string`.
 
   * Otherwise, throw an error.
 
   [consume an escaped code point]: #consuming-an-escaped-code-point
-  [name-start code point]: https://drafts.csswg.org/css-syntax-3/#name-start-code-point
+  [identifier-start code point]: https://drafts.csswg.org/css-syntax-3/#identifier-start-code-point
 
 * [Consume a name](#consuming-a-name) and append it to `string`.
 
@@ -236,9 +309,7 @@ sequence of strings and/or expressions. It follows the grammar for an
 * Otherwise, [consume an identifier](#consuming-an-identifier) and add its string
   to `components`.
 
-* While the input starts with `#{`, a [name code point][], or `\`:
-
-  [name code point]: https://drafts.csswg.org/css-syntax-3/#name-code-point
+* While the input starts with `#{`, a [identifier code point][], or `\`:
 
   * If the input starts with `#{`, consume an interpolation and add
     its expression to `components`.
@@ -254,15 +325,15 @@ This algorithm consumes input from a stream of [code points][] and returns a
 string. The grammar for this production is:
 
 <x><pre>
-**Name** ::= ([name code point][] | [escape][])+
+**Name** ::= ([identifier code point][] | [escape][])+
 </pre></x>
 
 * Let `string` be an empty string.
 
-* While the input starts with a [name code point][] or `\`:
+* While the input starts with a [identifier code point][] or `\`:
 
-  * If the input starts with a [name code point][], consume it and append it to
-    `string`.
+  * If the input starts with a [identifier code point][], consume it and append
+    it to `string`.
 
   * Otherwise, [consume an escaped code point][] and append it to `string`.
 
@@ -286,17 +357,16 @@ This production has the same grammar as [`escape`][escape] in CSS Syntax Level 3
 
 * Let `character` be the string containing only `codepoint`.
 
-* If `codepoint` is a [name-start code point][], return `character`.
+* If `codepoint` is a [identifier-start code point][], return `character`.
 
-* Otherwise, if `codepoint` is a [name code point][] and the `start` flag is
-  not set, return `character`.
+* Otherwise, if `codepoint` is an [identifier code point][] and the `start` flag
+  is not set, return `character`.
 
 * Otherwise, if `codepoint` is a [non-printable code point][], U+0009 CHARACTER
   TABULATION, U+000A LINE FEED, U+000D CARRIAGE RETURN, or U+000C FORM FEED;
   *or* if `codepoint` is a [digit][] and the `start` flag is set:
 
   [non-printable code point]: https://drafts.csswg.org/css-syntax-3/#non-printable-code-point
-  [digit]: https://drafts.csswg.org/css-syntax-3/#digit
 
   * Let `code` be the lowercase hexadecimal representation of `codepoint`,
     with no leading `0`s.
@@ -310,19 +380,15 @@ This production has the same grammar as [`escape`][escape] in CSS Syntax Level 3
 
 * Otherwise, return `"\"` + `character`.
 
-### Consuming `min()` or `max()`
+### Consuming a special function
 
-This algorithm consumes input from a stream of [code points][] and returns a
+This algorithm consumes input from a stream of [code points] and returns a
 SassScript expression.
 
-* Let `expression` be the result of consuming a [`MinMaxExpression`][]. If the
-  expression is ambiguous between `CssMinMax` and `FunctionExpression`,
-  `CssMinMax` should take precedence.
+* Let `expression` be the result of consuming a [`SpecialFunctionExpression`].
 
-  [`MinMaxExpression`]: #minmaxexpression
+  [`SpecialFunctionExpression`]: #specialfunctionexpression
 
-* If `expression` is a `FunctionExpression`, return it as-is.
-
-* Otherwise, if `expression` is a `CssMinMax`, return an unquoted interpolated
-  string expression that would be identical to the source text according to CSS
-  semantics for all possible interpolated strings.
+* Return an unquoted interpolated string expression that would be identical to
+  the source text according to CSS semantics for all possible interpolated
+  strings.
